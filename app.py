@@ -84,6 +84,10 @@ def safe_sample(df: pd.DataFrame, max_rows: int) -> pd.DataFrame:
     return df.sample(n=max_rows, random_state=42)
 
 
+def ui_divider() -> None:
+    st.markdown("---")
+
+
 def detect_ftir_structure(df: pd.DataFrame) -> Optional[Dict[str, object]]:
     if df.shape[1] < 5:
         return None
@@ -239,7 +243,7 @@ with st.sidebar:
     upload = st.file_uploader("选择 CSV 或 Excel 文件", type=["csv", "xlsx", "xls"])
     st.caption("建议先做基础清洗：空值、异常值、字段类型")
 
-    st.divider()
+    ui_divider()
     st.header("性能与展示限制")
     preview_rows = st.number_input("预览行数上限", min_value=50, max_value=2000, value=200, step=50)
     chart_rows = st.number_input("图表最大行数", min_value=200, max_value=200000, value=20000, step=200)
@@ -272,7 +276,7 @@ if df is None:
 
 render_overview(df)
 
-st.divider()
+ui_divider()
 
 st.subheader("统计概览")
 with st.expander("描述性统计（数值列）", expanded=True):
@@ -290,7 +294,7 @@ with st.expander("缺失值分布", expanded=False):
     else:
         st.dataframe(missing.rename("缺失数量"), use_container_width=True)
 
-st.divider()
+ui_divider()
 
 st.subheader("可视化")
 
@@ -318,7 +322,7 @@ with cols[1]:
         fig = px.bar(vc, x=cat_col, y="数量", title=f"{cat_col} 频数")
         st.plotly_chart(fig, use_container_width=True)
 
-st.divider()
+ui_divider()
 
 st.subheader("分组汇总")
 
@@ -334,7 +338,7 @@ if group_cols and agg_col:
         fig = px.bar(grouped, x=group_cols[0], y=agg_col, title="分组汇总")
         st.plotly_chart(fig, use_container_width=True)
 
-st.divider()
+ui_divider()
 
 st.subheader("相关性（数值列）")
 num_df = chart_df.select_dtypes(include="number")
@@ -345,7 +349,7 @@ if num_df.shape[1] >= 2:
 else:
     st.info("数值列不足，无法计算相关性。")
 
-st.divider()
+ui_divider()
 
 st.subheader("FTIR 专用分析")
 ftir = detect_ftir_structure(df)
@@ -484,7 +488,7 @@ else:
         else:
             st.warning("请选择至少一个组")
 
-st.divider()
+ui_divider()
 
 st.subheader("自动分析摘要")
 if ftir:
