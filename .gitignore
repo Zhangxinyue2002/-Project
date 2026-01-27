@@ -6,3 +6,6 @@ __pycache__/
 sample_preview.csv
 sample_summary.json
 .streamlit/secrets.toml
+*.png
+*.jpg
+*.jpeg

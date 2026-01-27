@@ -134,11 +134,62 @@ def detect_peaks(x: np.ndarray, y: np.ndarray, window: int, min_prom: float, top
             right = np.min(y_s[i + 1 : i + window + 1]) if i + window + 1 <= len(y_s) else y_s[i + 1]
             prominence = y_s[i] - max(left, right)
             if prominence >= min_prom:
-                peaks.append((x[i], y_s[i], prominence))
+                peaks.append((x[i], y[i], y_s[i], prominence))
     if not peaks:
-        return pd.DataFrame(columns=["波数", "强度", "峰突出度"])
-    peaks = sorted(peaks, key=lambda t: t[2], reverse=True)[:top_n]
-    return pd.DataFrame(peaks, columns=["波数", "强度", "峰突出度"])
+        return pd.DataFrame(columns=["峰值", "透过率", "平滑强度", "峰突出度"])
+    peaks = sorted(peaks, key=lambda t: t[3], reverse=True)[:top_n]
+    return pd.DataFrame(peaks, columns=["峰值", "透过率", "平滑强度", "峰突出度"])
+
+
+def default_band_mapping() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"波段下限": 3600, "波段上限": 3200, "对应基团": "O-H 伸缩", "对应成分": "纤维素/半纤维素"},
+            {"波段下限": 2970, "波段上限": 2840, "对应基团": "C-H 伸缩", "对应成分": "纤维素/木质素"},
+            {"波段下限": 1745, "波段上限": 1710, "对应基团": "C=O 伸缩", "对应成分": "半纤维素"},
+            {"波段下限": 1655, "波段上限": 1590, "对应基团": "芳香环 C=C", "对应成分": "木质素"},
+            {"波段下限": 1515, "波段上限": 1500, "对应基团": "芳香环骨架", "对应成分": "木质素"},
+            {"波段下限": 1470, "波段上限": 1410, "对应基团": "CH2 弯曲", "对应成分": "纤维素"},
+            {"波段下限": 1375, "波段上限": 1360, "对应基团": "C-H 弯曲", "对应成分": "纤维素"},
+            {"波段下限": 1335, "波段上限": 1310, "对应基团": "O-H 弯曲", "对应成分": "纤维素"},
+            {"波段下限": 1275, "波段上限": 1230, "对应基团": "C-O 伸缩", "对应成分": "木质素/半纤维素"},
+            {"波段下限": 1170, "波段上限": 1120, "对应基团": "C-O-C 伸缩", "对应成分": "纤维素"},
+            {"波段下限": 1115, "波段上限": 1030, "对应基团": "C-O 伸缩", "对应成分": "纤维素/半纤维素"},
+            {"波段下限": 900, "波段上限": 890, "对应基团": "β-糖苷键", "对应成分": "纤维素"},
+        ]
+    )
+
+
+def map_peaks_to_bands(peaks_df: pd.DataFrame, band_df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for _, row in peaks_df.iterrows():
+        peak = float(row["峰值"])
+        match = None
+        for _, b in band_df.iterrows():
+            low = float(b["波段下限"])
+            high = float(b["波段上限"])
+            band_min, band_max = min(low, high), max(low, high)
+            if band_min <= peak <= band_max:
+                match = b
+                break
+        if match is None:
+            band = "未知"
+            group = "未知"
+            comp = "未知"
+        else:
+            band = f"{match['波段下限']}-{match['波段上限']}"
+            group = match["对应基团"]
+            comp = match["对应成分"]
+        rows.append(
+            {
+                "波段": band,
+                "峰值": peak,
+                "对应基团": group,
+                "对应成分": comp,
+                "透过率": float(row["透过率"]),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def parse_sample_code(name: str) -> Tuple[str, Optional[int], Optional[int]]:
@@ -318,6 +369,16 @@ else:
         with st.expander("实验说明（来自 Sample.xlsx）", expanded=False):
             st.write(meta["experiment_text"])
 
+    with st.expander("FTIR 波段-基团映射", expanded=False):
+        if "band_map" not in st.session_state:
+            st.session_state["band_map"] = default_band_mapping()
+        band_df = st.data_editor(
+            st.session_state["band_map"],
+            num_rows="dynamic",
+            use_container_width=True,
+        )
+        st.session_state["band_map"] = band_df
+
     with st.expander("谱线绘制（单样本/多样本）", expanded=True):
         pick_samples = st.multiselect("选择样本", all_samples, default=default_samples, key="ftir_samples")
         step = st.number_input("每隔 N 个波数取点", min_value=1, max_value=20, value=1, step=1)
@@ -361,15 +422,34 @@ else:
             st.warning("请选择参考样本和至少一个对比样本")
 
     with st.expander("峰位检测", expanded=False):
+        peak_mode = st.selectbox("峰位来源", ["单一样本", "平均谱"], index=0)
         peak_sample = st.selectbox("选择样本", all_samples, index=0, key="ftir_peak_sample")
         smooth_window = st.number_input("平滑窗口", min_value=1, max_value=31, value=5, step=2)
-        y_vals = df_ftir[df_ftir[sample_col] == peak_sample][w_cols].iloc[0].to_numpy()
+        if peak_mode == "平均谱":
+            avg_samples = st.multiselect("选择用于平均的样本", all_samples, default=default_samples, key="ftir_peak_avg")
+            if avg_samples:
+                y_vals = df_ftir[df_ftir[sample_col].isin(avg_samples)][w_cols].mean(axis=0, skipna=True).to_numpy()
+            else:
+                y_vals = df_ftir[df_ftir[sample_col] == peak_sample][w_cols].iloc[0].to_numpy()
+        else:
+            y_vals = df_ftir[df_ftir[sample_col] == peak_sample][w_cols].iloc[0].to_numpy()
         prom_max = float(np.nanmax(y_vals) - np.nanmin(y_vals))
         prom_max = prom_max if prom_max > 0 else 0.01
         min_prom = st.slider("最小峰突出度", min_value=0.0, max_value=prom_max, value=min(0.001, prom_max), step=0.001)
         top_n = st.number_input("返回峰数量", min_value=5, max_value=50, value=15, step=1)
         peaks_df = detect_peaks(np.array(w_vals), y_vals, int(smooth_window), float(min_prom), int(top_n))
         st.dataframe(peaks_df, use_container_width=True)
+
+        band_df = st.session_state.get("band_map", default_band_mapping())
+        result_df = map_peaks_to_bands(peaks_df, band_df)
+        st.markdown("**FTIR 峰表（波段 / 峰值 / 基团 / 成分 / 透过率）**")
+        st.dataframe(result_df, use_container_width=True)
+        st.download_button(
+            "下载峰表 CSV",
+            data=result_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="ftir_peaks.csv",
+            mime="text/csv",
+        )
 
     with st.expander("分组平均谱与差异", expanded=False):
         group_mode = st.selectbox("分组方式", ["样本前缀 (LB/LD/SS/SR)", "系列编号 (1/2/3/4)"], index=0)
@@ -432,7 +512,7 @@ if ftir:
         y_vals = df_ftir[df_ftir[ftir["sample_col"]] == peak_sample][ftir["w_cols"]].iloc[0].to_numpy()
         peaks_df = detect_peaks(np.array(ftir["w_vals"]), y_vals, 5, 0.001, 10)
         if not peaks_df.empty:
-            top_peaks = ", ".join([f"{row['波数']:.1f}" for _, row in peaks_df.head(5).iterrows()])
+            top_peaks = ", ".join([f"{row['峰值']:.1f}" for _, row in peaks_df.head(5).iterrows()])
             summary_lines.append(f"样本 {peak_sample} 的主要峰位（前 5）：{top_peaks}。")
 
     # Variability across all samples

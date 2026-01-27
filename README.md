@@ -52,6 +52,15 @@ http://<你的IP>:8501
 
 如果需要改端口，修改 .streamlit/config.toml 中的 port。
 
+## 在线部署（Streamlit Community Cloud）
+
+1. 打开 https://share.streamlit.io/ 并登录 GitHub
+2. 选择仓库：Zhangxinyue2002/-Project
+3. 设置入口文件：app.py
+4. 点击 Deploy，等待部署完成即可获得在线链接
+
+说明：若需要私有数据，请不要上传到公开仓库，可改为私有仓库或使用 Streamlit Secrets。
+
 ## 实验说明（Sample.xlsx）
 
 如果项目根目录存在 Sample.xlsx，应用会自动读取并展示实验描述与样本前缀含义，用于增强自动分析摘要。
