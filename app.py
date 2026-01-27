@@ -376,12 +376,24 @@ else:
     with st.expander("FTIR 波段-基团映射", expanded=False):
         if "band_map" not in st.session_state:
             st.session_state["band_map"] = default_band_mapping()
-        band_df = st.data_editor(
-            st.session_state["band_map"],
-            num_rows="dynamic",
-            use_container_width=True,
+        st.caption("可在下方粘贴 CSV 进行编辑并应用。列名需包含：波段下限、波段上限、对应基团、对应成分。")
+        st.dataframe(st.session_state["band_map"], use_container_width=True)
+        csv_text = st.text_area(
+            "编辑映射（CSV）",
+            value=st.session_state["band_map"].to_csv(index=False),
+            height=200,
         )
-        st.session_state["band_map"] = band_df
+        if st.button("应用映射", key="apply_band_map"):
+            try:
+                new_df = pd.read_csv(io.StringIO(csv_text))
+                required_cols = {"波段下限", "波段上限", "对应基团", "对应成分"}
+                if not required_cols.issubset(set(new_df.columns)):
+                    st.error("CSV 缺少必要列：波段下限、波段上限、对应基团、对应成分")
+                else:
+                    st.session_state["band_map"] = new_df
+                    st.success("映射已更新")
+            except Exception as exc:
+                st.error(f"CSV 解析失败：{exc}")
 
     with st.expander("谱线绘制（单样本/多样本）", expanded=True):
         pick_samples = st.multiselect("选择样本", all_samples, default=default_samples, key="ftir_samples")
