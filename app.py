@@ -10,7 +10,12 @@ import plotly.express as px
 import streamlit as st
 
 
-st.set_page_config(page_title="数据分析与可视化", page_icon="📊", layout="wide")
+st.set_page_config(
+    page_title="菠萝叶纤维分析平台 - Pineapple Leaf Fiber Analysis",
+    page_icon="🌿",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 
 @dataclass
@@ -233,7 +238,17 @@ def compute_group_mean(df: pd.DataFrame, sample_col: str, w_cols: List[str], gro
     return grouped
 
 
-st.title("📊 数据分析与可视化（内置 Pandas）")
+st.title("🌿 菠萝叶纤维分析平台 | Pineapple Leaf Fiber Analysis")
+st.caption("📊 综合数据分析 | FTIR光谱 | 力学性能 | 提取率 | 纤维形态 | 报告生成")
+
+# Main tab navigation
+analysis_tab = st.selectbox(
+    "选择分析模块 Select Analysis Module",
+    ["📂 通用数据分析 General", "🔬 FTIR 光谱分析", "💪 断裂强度分析", "📈 纤维提取率分析", "📏 纤维形态分析", "📄 报告生成器"],
+    index=0
+)
+
+ui_divider()
 
 with st.sidebar:
     st.header("导入数据")
@@ -268,10 +283,354 @@ if upload is not None:
 df = st.session_state.get("df")
 
 if df is None:
-    st.info("请在左侧上传文件或使用示例数据。")
+    st.info("请在左侧上传文件或使用示例数据。 | Please upload a file or use sample data.")
     st.stop()
 
-render_overview(df)
+# ====================================================================================
+# TAB-SPECIFIC ANALYSIS SECTIONS
+# ====================================================================================
+
+if analysis_tab == "💪 断裂强度分析":
+    st.header("💪 断裂强度分析 | Break Force Analysis")
+    
+    st.info("📋 **数据格式要求**: Excel文件应包含样本名称列和至少2个重复测试列")
+    
+    # Show data preview
+    with st.expander("📊 数据预览 Data Preview", expanded=True):
+        st.dataframe(df.head(20), use_container_width=True)
+    
+    # Detect structure
+    st.subheader("🔍 数据结构识别")
+    
+    col_names = df.columns.tolist()
+    default_sample_col = col_names[0] if len(col_names) > 0 else None
+    
+    sample_col = st.selectbox("选择样本名称列 Sample Column:", col_names, index=0 if default_sample_col else 0)
+    
+    # Find numeric columns for replicates
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    
+    replicate_cols = st.multiselect(
+        "选择重复测试列 Replicate Columns (Sample_1, Sample_2, ...):",
+        numeric_cols,
+        default=numeric_cols[:3] if len(numeric_cols) >= 3 else numeric_cols
+    )
+    
+    if len(replicate_cols) < 1:
+        st.warning("⚠️ 请至少选择1个重复测试列")
+        st.stop()
+    
+    # Calculate average
+    df_analysis = df[[sample_col] + replicate_cols].copy()
+    df_analysis = df_analysis[df_analysis[sample_col].notna()]
+    
+    for col in replicate_cols:
+        df_analysis[col] = pd.to_numeric(df_analysis[col], errors='coerce')
+    
+    df_analysis['Average'] = df_analysis[replicate_cols].mean(axis=1)
+    df_analysis['StdDev'] = df_analysis[replicate_cols].std(axis=1)
+    df_analysis['CV(%)'] = (df_analysis['StdDev'] / df_analysis['Average'] * 100).round(2)
+    
+    # Extract sample groups
+    df_analysis['Group'] = df_analysis[sample_col].astype(str).str.extract(r'^([A-Z]+)', expand=False)
+    df_analysis['Is_Control'] = df_analysis[sample_col].astype(str).str.contains('0$', na=False)
+    
+    # Display results
+    st.subheader("📊 统计结果 Statistical Results")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("总样本数 Total", len(df_analysis))
+    col2.metric("平均强度 Mean", f"{df_analysis['Average'].mean():.2f} MPa")
+    col3.metric("标准差 StdDev", f"{df_analysis['Average'].std():.2f}")
+    col4.metric("变异系数 CV", f"{(df_analysis['Average'].std()/df_analysis['Average'].mean()*100):.1f}%")
+    
+    # Results table
+    st.dataframe(
+        df_analysis[[sample_col, 'Average', 'StdDev', 'CV(%)', 'Group']].style.format({
+            'Average': '{:.2f}',
+            'StdDev': '{:.2f}',
+            'CV(%)': '{:.1f}'
+        }),
+        use_container_width=True
+    )
+    
+    # Group comparison
+    st.subheader("📈 按组分析 Group Analysis")
+    
+    if df_analysis['Group'].notna().sum() > 0:
+        group_stats = df_analysis.groupby('Group')['Average'].agg(['count', 'mean', 'std', 'min', 'max']).reset_index()
+        group_stats.columns = ['组别 Group', '样本数 N', '平均值 Mean', '标准差 Std', '最小值 Min', '最大值 Max']
+        
+        st.dataframe(group_stats.style.format({
+            '平均值 Mean': '{:.2f}',
+            '标准差 Std': '{:.2f}',
+            '最小值 Min': '{:.2f}',
+            '最大值 Max': '{:.2f}'
+        }), use_container_width=True)
+        
+        # Visualizations
+        import plotly.graph_objects as go
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Box plot
+            fig_box = px.box(df_analysis, x='Group', y='Average', 
+                            title='断裂强度分布 | Breaking Strength Distribution',
+                            labels={'Average': 'Breaking Strength (MPa)', 'Group': 'Sample Group'})
+            st.plotly_chart(fig_box, use_container_width=True)
+        
+        with col2:
+            # Bar chart with error bars
+            fig_bar = px.bar(group_stats, x='组别 Group', y='平均值 Mean',
+                            error_y='标准差 Std',
+                            title='组间平均强度对比 | Group Mean Comparison',
+                            labels={'平均值 Mean': 'Mean Strength (MPa)', '组别 Group': 'Group'})
+            st.plotly_chart(fig_bar, use_container_width=True)
+    
+    # Control vs Treated
+    if df_analysis['Is_Control'].sum() > 0:
+        st.subheader("🔬 对照组 vs 处理组 | Control vs Treated")
+        
+        control = df_analysis[df_analysis['Is_Control']]
+        treated = df_analysis[~df_analysis['Is_Control']]
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**对照组 Control**")
+            st.metric("样本数", len(control))
+            st.metric("平均强度", f"{control['Average'].mean():.2f} MPa")
+            st.metric("强度范围", f"{control['Average'].min():.2f} - {control['Average'].max():.2f}")
+        
+        with col2:
+            st.markdown("**处理组 Treated**")
+            st.metric("样本数", len(treated))
+            st.metric("平均强度", f"{treated['Average'].mean():.2f} MPa")
+            
+            if len(control) > 0:
+                reduction = ((control['Average'].mean() - treated['Average'].mean()) / control['Average'].mean() * 100)
+                st.metric("强度损失", f"{reduction:.1f}%", delta=f"-{reduction:.1f}%", delta_color="inverse")
+    
+    # Download button
+    st.subheader("💾 导出结果 Export Results")
+    csv = df_analysis.to_csv(index=False, encoding='utf-8-sig')
+    st.download_button(
+        label="📥 下载结果 CSV",
+        data=csv,
+        file_name="break_force_analysis.csv",
+        mime="text/csv"
+    )
+
+elif analysis_tab == "📈 纤维提取率分析":
+    st.header("📈 纤维提取率分析 | Fiber Extraction Rate Analysis")
+    
+    st.info("📋 **公式**: E = m1/m0 (处理后干重 / 处理前重量)")
+    
+    with st.expander("📊 数据预览", expanded=True):
+        st.dataframe(df.head(20), use_container_width=True)
+    
+    col_names = df.columns.tolist()
+    
+    sample_col = st.selectbox("样本名称列:", col_names, index=0)
+    
+    # Check if extraction rate is already calculated
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    
+    calculation_method = st.radio(
+        "数据类型:",
+        ["已计算提取率 (Direct Rate)", "需要计算 (m0, m1)"]
+    )
+    
+    if calculation_method == "已计算提取率 (Direct Rate)":
+        rate_col = st.selectbox("提取率列:", numeric_cols)
+        
+        df_analysis = df[[sample_col, rate_col]].copy()
+        df_analysis = df_analysis[df_analysis[sample_col].notna()]
+        df_analysis[rate_col] = pd.to_numeric(df_analysis[rate_col], errors='coerce')
+        df_analysis = df_analysis[df_analysis[rate_col].notna()]
+        df_analysis.rename(columns={rate_col: 'Extraction_Rate'}, inplace=True)
+        
+    else:
+        m0_col = st.selectbox("m0 (处理前重量):", numeric_cols, index=0 if len(numeric_cols) > 0 else 0)
+        m1_col = st.selectbox("m1 (处理后干重):", numeric_cols, index=1 if len(numeric_cols) > 1 else 0)
+        
+        df_analysis = df[[sample_col, m0_col, m1_col]].copy()
+        df_analysis = df_analysis[df_analysis[sample_col].notna()]
+        
+        for col in [m0_col, m1_col]:
+            df_analysis[col] = pd.to_numeric(df_analysis[col], errors='coerce')
+        
+        df_analysis['Extraction_Rate'] = df_analysis[m1_col] / df_analysis[m0_col]
+        df_analysis = df_analysis[df_analysis['Extraction_Rate'].notna()]
+    
+    # Extract groups
+    df_analysis['Group'] = df_analysis[sample_col].astype(str).str.extract(r'^([A-Z]+)', expand=False)
+    
+    # Statistics
+    st.subheader("📊 统计结果")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("总样本数", len(df_analysis))
+    col2.metric("平均提取率", f"{df_analysis['Extraction_Rate'].mean():.3f}")
+    col3.metric("最高", f"{df_analysis['Extraction_Rate'].max():.3f}")
+    col4.metric("最低", f"{df_analysis['Extraction_Rate'].min():.3f}")
+    
+    # Display table
+    display_df = df_analysis.copy()
+    display_df['Extraction_Rate_%'] = (display_df['Extraction_Rate'] * 100).round(1)
+    
+    st.dataframe(
+        display_df[[sample_col, 'Extraction_Rate', 'Extraction_Rate_%', 'Group']],
+        use_container_width=True
+    )
+    
+    # Group analysis
+    if df_analysis['Group'].notna().sum() > 0:
+        st.subheader("📈 按组分析")
+        
+        group_stats = df_analysis.groupby('Group')['Extraction_Rate'].agg(['count', 'mean', 'std', 'min', 'max']).reset_index()
+        group_stats['mean_%'] = (group_stats['mean'] * 100).round(1)
+        
+        st.dataframe(group_stats, use_container_width=True)
+        
+        # Visualization
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig = px.bar(group_stats, x='Group', y='mean',
+                        error_y='std',
+                        title='平均提取率对比',
+                        labels={'mean': 'Extraction Rate', 'Group': 'Sample Group'})
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            fig = px.box(df_analysis, x='Group', y='Extraction_Rate',
+                        title='提取率分布',
+                        labels={'Extraction_Rate': 'Extraction Rate', 'Group': 'Sample Group'})
+            st.plotly_chart(fig, use_container_width=True)
+    
+    # Top/Bottom performers
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("🏆 提取率最高")
+        top5 = df_analysis.nlargest(5, 'Extraction_Rate')[[sample_col, 'Extraction_Rate']]
+        top5['Rate_%'] = (top5['Extraction_Rate'] * 100).round(1)
+        st.dataframe(top5, use_container_width=True)
+    
+    with col2:
+        st.subheader("⚠️ 提取率最低")
+        bottom5 = df_analysis.nsmallest(5, 'Extraction_Rate')[[sample_col, 'Extraction_Rate']]
+        bottom5['Rate_%'] = (bottom5['Extraction_Rate'] * 100).round(1)
+        st.dataframe(bottom5, use_container_width=True)
+    
+    # Download
+    st.subheader("💾 导出结果")
+    csv = df_analysis.to_csv(index=False, encoding='utf-8-sig')
+    st.download_button(
+        label="📥 下载结果 CSV",
+        data=csv,
+        file_name="extraction_rate_analysis.csv",
+        mime="text/csv"
+    )
+
+elif analysis_tab == "📏 纤维形态分析":
+    st.header("📏 纤维形态分析 | Fiber Morphology Analysis")
+    
+    st.info("📋 分析纤维长度、直径等形态参数")
+    
+    with st.expander("📊 数据预览", expanded=True):
+        st.dataframe(df.head(20), use_container_width=True)
+    
+    st.subheader("🔍 选择分析参数")
+    
+    col_names = df.columns.tolist()
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    
+    length_col = st.selectbox("长度列 L(cm):", [c for c in col_names if 'L(' in str(c) or '长度' in str(c)] or numeric_cols)
+    
+    if length_col:
+        df_analysis = df[df[length_col].notna()].copy()
+        df_analysis[length_col] = pd.to_numeric(df_analysis[length_col], errors='coerce')
+        df_analysis = df_analysis[df_analysis[length_col].notna()]
+        
+        st.subheader("📊 统计结果")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("样本数", len(df_analysis))
+        col2.metric("平均长度", f"{df_analysis[length_col].mean():.2f} cm")
+        col3.metric("标准差", f"{df_analysis[length_col].std():.2f} cm")
+        col4.metric("范围", f"{df_analysis[length_col].min():.1f} - {df_analysis[length_col].max():.1f} cm")
+        
+        # Distribution
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig = px.histogram(df_analysis, x=length_col, nbins=30,
+                              title='长度分布 | Length Distribution',
+                              labels={length_col: 'Fiber Length (cm)', 'count': 'Frequency'})
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            fig = px.box(df_analysis, y=length_col,
+                        title='长度箱线图 | Length Box Plot',
+                        labels={length_col: 'Fiber Length (cm)'})
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Descriptive statistics
+        st.subheader("📈 描述性统计")
+        stats = df_analysis[length_col].describe()
+        st.dataframe(stats, use_container_width=True)
+    
+    else:
+        st.warning("⚠️ 未找到长度列，请检查数据格式")
+
+elif analysis_tab == "📄 报告生成器":
+    st.header("📄 自动报告生成器 | Report Generator")
+    
+    st.info("🚧 功能开发中... 即将支持 PDF/Word/Excel 格式导出")
+    
+    st.markdown("""
+    ### 计划功能:
+    - ✅ 数据统计摘要
+    - ✅ 可视化图表集
+    - 🔲 PDF 报告导出
+    - 🔲 Word 文档导出
+    - 🔲 PowerPoint 演示文稿
+    - 🔲 自定义报告模板
+    """)
+    
+    if st.button("生成简易文本报告"):
+        st.subheader("📋 数据分析报告")
+        st.markdown(f"""
+        **报告日期**: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
+        
+        **数据概览**:
+        - 行数: {len(df)}
+        - 列数: {len(df.columns)}
+        - 缺失值: {df.isna().sum().sum()}
+        
+        **数值列统计**:
+        """)
+        
+        numeric_df = df.select_dtypes(include=['number'])
+        if len(numeric_df.columns) > 0:
+            st.dataframe(numeric_df.describe(), use_container_width=True)
+
+elif analysis_tab == "🔬 FTIR 光谱分析":
+    st.header("🔬 FTIR 光谱分析 | FTIR Spectroscopy Analysis")
+    # Continue with existing FTIR code below...
+    render_overview(df)
+
+else:  # Default: General Analysis
+    render_overview(df)
+
+# Only show general analysis tabs if in general mode
+if analysis_tab in ["📂 通用数据分析 General", "🔬 FTIR 光谱分析"]:
+    pass  # Continue with existing code below
+else:
+    st.stop()  # Stop execution if in specialized analysis mode
 
 ui_divider()
 
